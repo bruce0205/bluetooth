@@ -1,22 +1,3 @@
-// This example scans and then connects to a specific Bluetooth peripheral
-// that can provide the Heart Rate Service (HRS).
-//
-// Once connected, it subscribes to notifications for the data value, and
-// displays it.
-//
-// To run this on a desktop system:
-//
-//              go run ./examples/heartrate-monitor EE:74:7D:C9:2A:68
-//
-// To run this on a microcontroller, change the constant value in the file
-// "mcu.go" to set the MAC address of the device you want to discover.
-// Then, flash to the microcontroller board like this:
-//
-//              tinygo flash -o circuitplay-bluefruit ./examples/heartrate-monitor
-//
-// Once the program is flashed to the board, connect to the USB port
-// via serial to view the output.
-//
 package main
 
 import (
@@ -48,31 +29,26 @@ func connectAddress() string {
 	return address
 }
 
+var overdueCounter = 0
 var receivedTime = time.Now().Unix()
 
+func init() {
+	ioutil.WriteFile("reconnect.log", []byte(" \n"), 0744)
+	ioutil.WriteFile("bluetooth.log", []byte(strconv.FormatInt(receivedTime, 10)+" - start to testing...\n"), 0744)
+}
+
 func run() {
+	f, err := os.OpenFile("bluetooth.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	r, _ := os.OpenFile("reconnect.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	defer f.Close()
+	defer r.Close()
+	defer func() {
+		run()
+	}()
 	receivedTime := time.Now().Unix()
 	println("enabling")
-	ioutil.WriteFile("bluetooth.log", []byte(strconv.FormatInt(receivedTime, 10)+" - start to testing...\n"), 0744)
-	f, err := os.OpenFile("bluetooth.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	defer f.Close()
+	// ioutil.WriteFile("bluetooth.log", []byte(strconv.FormatInt(receivedTime, 10)+" - start to testing...\n"), 0744)
 
-	checkTimer := time.NewTicker(3 * time.Second)
-	go func() {
-		for {
-			select {
-			case <-checkTimer.C:
-				// ioutil.WriteFile("bluetooth.log", []byte("check...\n"), 0744)
-				checkTime := time.Now().Unix()
-				fmt.Println("checkTime", checkTime)
-				if checkTime-receivedTime > 3 {
-					f.WriteString(strconv.FormatInt(checkTime, 10) + " - overdue\n")
-				} else {
-					f.WriteString(strconv.FormatInt(checkTime, 10) + " - pass\n")
-				}
-			}
-		}
-	}()
 	// Enable BLE interface.
 	must("enable BLE stack", adapter.Enable())
 
@@ -133,11 +109,30 @@ func run() {
 		fmt.Println("receivedTime", receivedTime)
 	})
 
-	select {}
+	checkTimer := time.NewTicker(3 * time.Second)
+	for {
+		select {
+		case <-checkTimer.C:
+			// ioutil.WriteFile("bluetooth.log", []byte("check...\n"), 0744)
+			checkTime := time.Now().Unix()
+			fmt.Println("checkTime", checkTime)
+			if checkTime-receivedTime > 3 {
+				overdueCounter++
+				f.WriteString(strconv.FormatInt(checkTime, 10) + " - overdue\n")
+				if overdueCounter > 2 {
+					r.WriteString(strconv.FormatInt(checkTime, 10) + " - reconnect\n")
+					device.Disconnect()
+					run()
+				}
+			} else {
+				overdueCounter = 0
+				f.WriteString(strconv.FormatInt(checkTime, 10) + " - pass\n")
+			}
+		}
+	}
 }
 
 func main() {
-	run()
 	run()
 }
 
